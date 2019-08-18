@@ -44,6 +44,5 @@ int main(int argc, char** argv)
     {
         sessions[i].join();
     }
-
     return 0;
 }

