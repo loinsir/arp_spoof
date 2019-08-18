@@ -28,7 +28,7 @@ int main(int argc, char** argv)
     static uint8_t host_ip[4];
 
 
-    thread* sessions = new thread(argc);    //create thread
+    thread* sessions = new thread[(argc-2) / 2];    //create thread
 
     for (int i = 2, idx = 0; i < argc; i += 2, idx++)
     {
@@ -40,12 +40,10 @@ int main(int argc, char** argv)
         get_node_MAC(handle, host_mac, sender_IP, sender_mac);
         get_node_MAC(handle, host_mac, target_IP, target_mac);
 
-        arp_spoof(handle, sender_mac, sender_IP, host_mac, target_IP);
-
+        sessions[idx] = thread(attack, handle, sender_mac, sender_IP, target_mac, target_IP, host_mac);
 
     }
 
-
-    delete sessions;
+    sessions->join();
     return 0;
 }
