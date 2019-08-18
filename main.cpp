@@ -3,6 +3,7 @@
 #include <thread>
 #include <vector>
 #include "arp_spoof.h"
+#include <stdlib.h>
 
 using namespace std;
 
@@ -16,34 +17,33 @@ int main(int argc, char** argv)
 
     char* dev = argv[1];
     char errbuf[PCAP_ERRBUF_SIZE];
-    static pcap_t* handle = pcap_open_live(dev, PCAP_BUF_SIZE, 1, 1000, errbuf);          //handle
+    pcap_t* handle = pcap_open_live(dev, PCAP_BUF_SIZE, 1, 1000, errbuf);          //handle
     if (handle == nullptr)
     {
         fprintf(stderr, "couldn't open device %s: %s\n", dev, errbuf);
         return -1;
     }
 
-    static uint8_t host_mac[6];
-    get_attacker_mac(dev, host_mac);
-    static uint8_t host_ip[4];
-
-
-    thread* sessions = new thread[(argc-2) / 2];    //create thread
+    vector<thread> sessions;    //create thread
 
     for (int i = 2, idx = 0; i < argc; i += 2, idx++)
     {
-        uint8_t sender_mac[6], target_mac[6];
-        uint8_t sender_IP[4], target_IP[4];
+        argues arguments;
+        arguments.fp = handle;
+        get_attacker_mac(dev, arguments.host_mac);
 
-        convert_argv_into_ip(sender_IP, argv[i]);
-        convert_argv_into_ip(target_IP, argv[i+1]);
-        get_node_MAC(handle, host_mac, sender_IP, sender_mac);
-        get_node_MAC(handle, host_mac, target_IP, target_mac);
+        convert_argv_into_ip(arguments.sender_IP, argv[i]);
+        convert_argv_into_ip(arguments.target_IP, argv[i+1]);
+        get_node_MAC(handle, arguments.host_mac, arguments.sender_IP, arguments.sender_mac);
+        get_node_MAC(handle, arguments.host_mac, arguments.target_IP, arguments.target_mac);
 
-        sessions[idx] = thread(attack, handle, sender_mac, sender_IP, target_mac, target_IP, host_mac);
+        sessions.emplace_back(thread(attack, arguments));
 
     }
+    for(int i = 0; i < (argc-2) / 2; i++)
+    {
+        sessions[i].join();
+    }
 
-    sessions->join();
     return 0;
 }
